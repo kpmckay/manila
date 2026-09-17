@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Manila</title>
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" href="/icon-192.png" type="image/png">
+<!-- Opened in its own window, this is where the taskbar icon comes from, and
+     it is what makes the browser offer to install Manila as an app. -->
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#8a6a35">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header id="folder-bar" class="folder-bar" hidden>
+    <div class="brand" title="A simple action item tracking tool">
+      Manila
+    </div>
+    <button id="project-chip" class="project-chip" title="Switch project"></button>
+    <nav id="folder-tabs" class="tabs folders"></nav>
+    <button id="new-folder" class="ghost" title="New folder">+</button>
+    <div class="spacer"></div>
+    <span id="save-status" class="save-status" title=""></span>
+  </header>
+
+  <nav id="page-tabs" class="tabs pages" hidden></nav>
+
+  <main id="view" hidden></main>
+
+  <div id="empty" class="empty" hidden>
+    <p>No folders yet.</p>
+    <button id="empty-new" class="primary">Create your first folder</button>
+  </div>
+
+  <section id="picker" class="picker" hidden>
+    <h1>Manila</h1>
+    <p class="tagline">A simple action item tracking tool.</p>
+    <ul id="picker-list" class="picker-list"></ul>
+    <div class="picker-actions">
+      <button id="picker-new" class="primary">New project</button>
+      <button id="picker-import" class="ghost">Open an existing project</button>
+    </div>
+    <p id="picker-hint" class="hint"></p>
+  </section>
+
+<script type="module" src="/app.js"></script>
+</body>
+</html>

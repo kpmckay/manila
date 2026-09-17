@@ -1,0 +1,25 @@
+# Manila keeps no data in this directory -- projects live in
+# ~/.local/share/manila or %LOCALAPPDATA%\Manila, and the registry naming them
+# in ~/.config/manila or %APPDATA%\Manila. Nothing here should ever hold a
+# database, but these patterns say so out loud rather than relying on it.
+*.db
+*.db-wal
+*.db-shm
+projects.json
+workspaces.json
+
+# Bytecode, including the copy the Windows installer leaves behind.
+__pycache__/
+*.py[cod]
+
+# Local tool and editor state, which names this machine and this account.
+.claude/
+.venv/
+venv/
+.idea/
+.vscode/
+
+# Junk the two platforms leave lying about.
+.DS_Store
+Thumbs.db
+desktop.ini

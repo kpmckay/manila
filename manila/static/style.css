@@ -1,0 +1,1602 @@
+/* Manila -- a paper-and-folder aesthetic, because that is what it is. */
+
+:root {
+  color-scheme: light;
+  --paper:        #faf7f0;
+  --card:         #fffdf8;
+  --manila:       #ddcda6;
+  --manila-dim:   #d0bf95;
+  --manila-live:  #f3e9d2;
+  --ink:          #2f2a21;
+  --muted:        #7d7362;
+  --rule:         #ddd1b6;
+  --rule-soft:    #ebe2ce;
+  --kraft:        #c4ad7e;
+  --fold:         rgba(120, 96, 48, .18);
+  --accent:       #8a6a35;
+  --danger:       #a4432f;
+  --shadow:       0 1px 2px rgba(60, 48, 25, .10);
+  --radius:       7px;
+  --font:         ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono:         ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --paper:       #191713;
+    --card:        #22201a;
+    --manila:      #3d372c;
+    --manila-dim:  #332e25;
+    --manila-live: #4c4436;
+    --ink:         #ece5d6;
+    --muted:       #9b9182;
+    --rule:        #3c362c;
+    --rule-soft:   #302b23;
+    --kraft:       #4a4234;
+    --fold:        rgba(0, 0, 0, .35);
+    --accent:      #c9a05e;
+    --danger:      #d1705a;
+    --shadow:      0 1px 2px rgba(0, 0, 0, .35);
+  }
+}
+
+* { box-sizing: border-box; }
+
+/* Hiding has to actually hide.
+ *
+ * The browser's own rule for [hidden] is display:none, but it carries the same
+ * weight as a class -- so `.folder-bar { display: flex }` quietly beat it, and
+ * setting .hidden on the header or the tab bars did nothing at all. They stayed
+ * on screen over the picker, looking live, while the clicks went nowhere
+ * because no project was open behind them. */
+[hidden] { display: none !important; }
+
+body {
+  margin: 0;
+  font: 13.5px/1.5 var(--font);
+  color: var(--ink);
+  background-color: var(--paper);
+  background-image:
+    repeating-linear-gradient(64deg,  rgba(150, 122, 70, .022) 0 2px, transparent 2px 5px),
+    repeating-linear-gradient(-58deg, rgba(150, 122, 70, .018) 0 3px, transparent 3px 7px);
+}
+
+/* The shape every tab in Manila is cut to.
+ *
+ * A real 1/3-cut manila folder tab has dead-vertical sides, a flat top, and
+ * two die radii: a convex one at each top corner, and a concave sweep where
+ * the cut runs back down into the folder's own top edge. That second one is
+ * what reads as card stock through a die rather than as a rounded rectangle.
+ *
+ * It is also long and shallow -- 3 1/6 x 7/16in, better than 7:1 -- and that
+ * proportion turns out to matter more than either radius. At 3:1 the same
+ * shape reads as browser chrome no matter how the corners are cut, which is
+ * how this started: a 32px tab, taller than any folder tab has ever been.
+ *
+ * --die is the corner radius, and the sweep is cut to match. Real dies run
+ * about 1/8in on a 7/16in tab, near enough 0.28 of the height, so each tab
+ * sets its own from its own height and the whole family stays in proportion. */
+.tab, .section-title, .frame-tab, .project-card .tab-strip {
+  --die: 5px;
+  position: relative;
+  border-radius: var(--die) var(--die) 0 0;
+}
+
+/* The concave sweep at the base, one each side.
+ *
+ * Cut with a mask rather than drawn with a shadow, because a shadow would have
+ * to be painted in whatever is behind the tab -- and these sit on four
+ * different backgrounds, one of which is a per-project accent picked at
+ * runtime. A mask needs to know nothing about any of them.
+ *
+ * `background: inherit` carries the tab's own colour through, so hover, active
+ * and the project accent all follow with no further rule. */
+:is(.tab, .section-title, .frame-tab, .project-card .tab-strip)::before,
+:is(.tab, .section-title, .frame-tab, .project-card .tab-strip)::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  width: var(--die);
+  height: var(--die);
+  background: inherit;
+  transition: background .12s;
+}
+:is(.tab, .section-title, .frame-tab, .project-card .tab-strip)::before {
+  left: calc(var(--die) * -1);
+  -webkit-mask: radial-gradient(circle var(--die) at 0 0, transparent var(--die), #000 var(--die));
+          mask: radial-gradient(circle var(--die) at 0 0, transparent var(--die), #000 var(--die));
+}
+:is(.tab, .section-title, .frame-tab, .project-card .tab-strip)::after {
+  right: calc(var(--die) * -1);
+  -webkit-mask: radial-gradient(circle var(--die) at 100% 0, transparent var(--die), #000 var(--die));
+          mask: radial-gradient(circle var(--die) at 100% 0, transparent var(--die), #000 var(--die));
+}
+
+/* Folder tabs need room between them for those sweeps to land in; without it
+   the flare of one runs into the next and they read as a single strip. Page
+   tabs are underlined, not cut, and keep the tighter spacing. */
+.tabs.folders { gap: 11px; }
+
+button { font: inherit; color: inherit; cursor: pointer; }
+
+.spacer { flex: 1; }
+
+/* --- folder tabs ---------------------------------------------------------- */
+
+.folder-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 10px 16px 0;
+  background: var(--paper);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  height: 30px;
+  margin: 0 18px 8px 0;
+  padding: 0;
+  font-weight: 650;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  font-size: 15px;
+  color: var(--ink);
+  cursor: default;
+  user-select: none;
+}
+
+/* The open project's name, always visible, always the way back to the picker. */
+.project-chip {
+  display: flex;
+  align-items: center;
+  height: 30px;
+  margin: 0 22px 8px 0;
+  padding: 0 14px;
+  border: none;
+  border-radius: 20px;
+  background: var(--accent);
+  color: var(--paper);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  max-width: 18rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.project-chip:hover { filter: brightness(1.12); }
+
+/* --- the picker ----------------------------------------------------------- */
+
+.picker { max-width: 44rem; margin: 0 auto; padding: 72px 20px; }
+.picker h1 { margin: 0; font-size: 26px; letter-spacing: .01em; }
+.picker .tagline { margin: 4px 0 32px; color: var(--muted); font-size: 13px; }
+.picker .hint { margin-top: 18px; color: var(--muted); font-size: 12px; }
+.picker-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+.picker-list { list-style: none; margin: 0 0 20px; padding: 0;
+               display: flex; flex-direction: column; gap: 8px; }
+
+.project-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  border: 1px solid var(--rule);
+  border-top: 2px solid var(--kraft);
+  border-radius: 0 var(--radius) var(--radius) var(--radius);
+  background: var(--card);
+  box-shadow: var(--shadow);
+  padding-right: 10px;
+}
+/* The colored tab is how you tell one project from another at a glance. */
+.project-card .tab-strip {
+  position: absolute;
+  --die: 4px;
+  top: -12px;
+  left: 14px;
+  height: 12px;
+  min-width: 64px;
+  background: var(--accent);
+}
+.project-card.dragging { opacity: .4; }
+.project-card .open {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  align-items: flex-start;
+  background: none;
+  border: none;
+  padding: 13px 16px;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+}
+.project-card .open:hover { background: var(--manila-dim); }
+.project-card .open:disabled { cursor: not-allowed; opacity: .55; }
+.project-card .name { font-size: 15px; font-weight: 600; }
+.project-rename {
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin: -2px 0;
+  width: 100%;
+  max-width: 22rem;
+  outline: none;
+}
+.project-card .meta { font-size: 11.5px; color: var(--muted); }
+.project-card .tools { display: flex; gap: 4px; opacity: 0; transition: opacity .12s; }
+.project-card:hover .tools, .project-card:focus-within .tools { opacity: 1; }
+.project-card .tools button { font-size: 11.5px; padding: 3px 8px; }
+
+.tabs { display: flex; align-items: flex-end; gap: 3px; flex-wrap: wrap; }
+
+/* Every tab is the same height so their bases line up along one edge; the
+   open one differs by color and by joining the sheet, never by size. */
+.tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  background: var(--manila-dim);
+  color: var(--muted);
+  /* 20 x ~125px is a shade over 6:1 -- as near the real 7:1 as a tab can get
+     and still hold a folder's name at a readable size. */
+  height: 20px;
+  padding: 0 30px;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  transition: background .12s, color .12s;
+}
+.tab:hover { background: var(--manila); color: var(--ink); }
+.tab.active {
+  background: var(--manila-live);
+  color: var(--ink);
+  font-weight: 560;
+  margin-bottom: -1px;
+  padding-bottom: 1px;
+}
+.tab.dragging { opacity: .4; }
+.tab .dot { color: var(--muted); font-size: 11px; margin-right: -6px; padding: 0 2px; }
+.tab .dot:hover { color: var(--ink); }
+
+/* The page tabs sit on the sheet the folder tab opens onto. */
+/* The page tabs are cut from the same card as the folder tabs above them, one
+   level in: they sit on the folder's own sheet, and the open one joins the
+   paper the tables are drawn on -- a folder inside a folder, which is what
+   they are. They used to be underlined text, which read as a different app's
+   navigation bolted under Manila's own. */
+.pages {
+  gap: 11px;
+  padding: 7px 16px 0;
+  border-bottom: 1px solid var(--rule);
+  background: var(--manila-live);
+}
+.pages .tab {
+  background: var(--manila);
+  padding: 0 22px;
+  font-size: 12px;
+}
+.pages .tab:hover { background: var(--manila-dim); color: var(--ink); }
+.pages .tab.active {
+  background: var(--paper);
+  color: var(--ink);
+  font-weight: 560;
+}
+
+.ghost {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--muted);
+  padding: 5px 10px;
+  margin-bottom: 4px;
+}
+.ghost:hover { background: var(--manila-dim); color: var(--ink); }
+.ghost.on { background: var(--manila); color: var(--ink); }
+
+.primary {
+  background: var(--accent);
+  color: var(--paper);
+  border: none;
+  border-radius: var(--radius);
+  padding: 8px 16px;
+}
+/* One that cannot be pressed has to look it -- the folder browser disables it
+   whenever the folder on screen is not one you can use. */
+.primary:disabled { opacity: .45; cursor: not-allowed; }
+
+/* --- sections ------------------------------------------------------------- */
+
+main { padding: 22px 16px 120px; max-width: 1600px; }
+
+.section { margin-bottom: 34px; }
+
+/* The title tab sets the height; everything beside it centres on the same
+   line. The tab still reaches the bottom edge, so it joins the table. */
+.section-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 0;
+}
+
+/* Cut and sized like the folder tabs above it, so the whole app reads as one
+   set of folders rather than two unrelated tab styles. */
+.section-title {
+  --die: 6px;
+  /* Shifted over by exactly the die, so the sweep at its base lands flush with
+     the table's left edge instead of hanging off the paper into nothing. A
+     left-cut folder tab starts where the folder starts, not before it. */
+  margin-left: var(--die);
+  display: flex;
+  align-items: center;
+  background: var(--manila);
+  border: none;
+  height: 22px;
+  padding: 0 18px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  color: var(--ink);
+}
+
+
+
+.scopes { display: flex; align-items: center; gap: 2px; }
+/* Slimmer than the title tab beside it, deliberately.
+ *
+ * It inherited the body's line-height, which made the pill 25px against the
+ * tab's 22px -- so the pill, not the tab, set the height of the whole head,
+ * and its bottom edge came to rest flat on the table. It has to be the
+ * shorter of the two to sit clear of the paper. */
+.scope {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 20px;
+  color: var(--muted);
+  padding: 2px 9px;
+  font-size: 11.5px;
+  line-height: 1;
+}
+.scope:hover { color: var(--ink); }
+.scope.on { background: var(--manila-dim); color: var(--ink); border-color: var(--rule); }
+/* How the rows are ordered is a different question from which rows are shown,
+   so it stands apart from Active/Archived rather than running on from it. */
+.orders { padding-left: 10px; border-left: 1px solid var(--rule); }
+
+.count { color: var(--muted); font-size: 11.5px; }
+
+/* --- tables --------------------------------------------------------------- */
+
+.table {
+  border: 1px solid var(--rule);
+  border-top: 2px solid var(--kraft);
+  border-radius: 0 var(--radius) var(--radius) var(--radius);
+  background: var(--card);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: var(--cols);
+  align-items: stretch;
+  border-bottom: 1px solid var(--rule-soft);
+}
+.row:last-child { border-bottom: none; }
+
+.row.head {
+  background: var(--manila-dim);
+  border-bottom: 1px solid var(--rule);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: .03em;
+  color: var(--ink);
+}
+.row.head .cell { padding: 7px 10px; cursor: default; }
+
+.group { border-bottom: 1px solid var(--rule-soft); }
+.group:last-of-type { border-bottom: none; }
+.group > .row { border-bottom: none; }
+.group.dragging { opacity: .35; }
+.group.drop-target { box-shadow: inset 0 2px 0 var(--accent); }
+.group.done > .row .cell { color: var(--muted); }
+.group.done > .row .cell[data-field="item"] .value { text-decoration: line-through; }
+
+.cell {
+  padding: 8px 10px;
+  min-height: 36px;
+  border-right: 1px solid var(--rule-soft);
+  position: relative;
+  cursor: text;
+  overflow-wrap: anywhere;
+}
+.cell:last-child { border-right: none; }
+.cell:hover { background: color-mix(in srgb, var(--manila-live) 45%, transparent); }
+.cell .value { white-space: pre-wrap; }
+.cell .value:empty::after { content: ""; }
+.cell .rel { color: var(--muted); font-size: 11.5px; display: block; }
+/* A deadline that has passed. The only red in the table. */
+.cell .rel.overdue { color: var(--danger); font-weight: 600; }
+
+.cell.grip-cell, .cell.actions-cell {
+  cursor: default;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px;
+}
+/* The row's own buttons, centred in their column with room at the edge. Every
+   row holds the same three slots, so they line up down the table. */
+.cell.actions-cell { justify-content: center; gap: 3px; padding: 6px 8px; }
+
+/* A slot held open for a history that does not exist yet. */
+.icon.vacant { visibility: hidden; pointer-events: none; }
+.cell.grip-cell { justify-content: center; color: var(--rule); cursor: grab; }
+.cell.grip-cell:hover { color: var(--muted); }
+/* Sorted by date: there is nothing to drag, so nothing should invite it. */
+.cell.grip-cell.locked, .cell.grip-cell.locked:hover { color: var(--rule); opacity: .4; cursor: default; }
+.cell.check-cell { display: flex; align-items: center; justify-content: center; cursor: default; }
+.cell.check-cell input { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+
+.icon {
+  background: none;
+  border: none;
+  padding: 4px;
+  border-radius: 5px;
+  color: var(--muted);
+  display: inline-flex;
+  opacity: 0;
+  transition: opacity .12s;
+}
+.group:hover .icon, .icon:focus-visible { opacity: 1; }
+.icon:hover { background: var(--manila-dim); color: var(--ink); }
+.icon.trash:hover { color: var(--danger); }
+.icon.log.on { color: var(--accent); }
+.icon svg { width: 15px; height: 15px; }
+
+/* history chip */
+/* An editable cell stacks its value above its chip, and the chip is pushed to
+   the bottom right corner -- the same corner in every cell, so a column of them
+   lines up down the table. */
+.cell.editable { display: flex; flex-direction: column; }
+.cell.editable > .value { flex: 1 1 auto; }
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  align-self: flex-end;
+  margin-top: auto;
+  padding: 1px 6px 1px 4px;
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--muted);
+  background: var(--manila-dim);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+}
+.chip:hover { color: var(--ink); background: var(--manila); }
+.chip.on { background: var(--accent); border-color: var(--accent); color: var(--paper); }
+.chip svg { width: 9px; height: 9px; }
+
+/* --- did it save? ---------------------------------------------------------- */
+
+.cell-saving { background: color-mix(in srgb, var(--manila-live) 55%, transparent); }
+.cell-saved {
+  animation: cell-saved 1.4s ease-out;
+}
+@keyframes cell-saved {
+  0%   { background: color-mix(in srgb, var(--accent) 26%, transparent); }
+  100% { background: transparent; }
+}
+/* Stays until the value is really stored. A refused change must not look like
+   an accepted one just because the toast has gone. */
+.cell-failed {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  box-shadow: inset 0 0 0 1.5px var(--danger);
+}
+
+.frame-failed { box-shadow: 0 0 0 2px var(--danger), 0 6px 16px rgba(60, 48, 25, .09); }
+
+.save-status {
+  font-size: 11.5px;
+  font-family: var(--mono);
+  color: var(--muted);
+  padding: 0 4px 0 0;
+  margin-bottom: 12px;
+  white-space: nowrap;
+  cursor: default;
+}
+.save-status[data-tone="ok"]   { color: var(--muted); }
+.save-status[data-tone="busy"] { color: var(--accent); }
+.save-status[data-tone="bad"]  { color: var(--danger); font-weight: 600; }
+.save-status[data-tone="idle"] { opacity: .55; }
+.save-status::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  vertical-align: 1px;
+  background: currentColor;
+}
+
+/* editors */
+.cell input, .cell textarea {
+  font: inherit;
+  color: inherit;
+  width: 100%;
+  background: var(--paper);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 4px 6px;
+  outline: none;
+  resize: none;
+  display: block;
+}
+.cell textarea { min-height: 3.4em; line-height: 1.45; }
+.datenote-editor { display: flex; flex-direction: column; gap: 4px; }
+.datenote-editor input[type="date"] { font-family: var(--mono); font-size: 12px; }
+/* A picker that is also a text box. The arrow says there is a list; the box
+   says you are not limited to it. */
+/* Where a borrowed date came from. Quiet on purpose: it is a footnote to the
+   date, not a second thing to read. */
+.cell .borrowed-from {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-style: italic;
+  margin-top: 1px;
+}
+
+.link-pick {
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 3px 4px;
+  width: 100%;
+  min-width: 0;
+}
+.link-pick:focus { border-color: var(--accent); outline: none; }
+/* A date that is not yours to type reads as settled, not as disabled. */
+.cell input[type="date"].borrowed {
+  color: var(--muted);
+  background: var(--manila-live);
+  border-style: dashed;
+}
+
+.combo { position: relative; display: flex; }
+.combo input { flex: 1; min-width: 0; padding-right: 22px; }
+.datenote-editor .via input { font-weight: 560; }
+
+.combo-open {
+  position: absolute;
+  right: 1px;
+  top: 1px;
+  bottom: 1px;
+  width: 20px;
+  border: none;
+  background: none;
+  color: var(--muted);
+  padding: 0;
+}
+.combo-open::after {
+  content: "";
+  display: block;
+  margin: 0 auto;
+  width: 0;
+  height: 0;
+  border: 4px solid transparent;
+  border-top-color: currentColor;
+  transform: translateY(2px);
+}
+.combo-open:hover { color: var(--ink); }
+.combo.open .combo-open { color: var(--accent); }
+
+/* Attached to the body, not the cell, so the table cannot clip it. Positioned
+   in viewport coordinates against the input it belongs to. */
+.combo-list {
+  position: fixed;
+  z-index: 70;
+  list-style: none;
+  margin: 0;
+  padding: 3px;
+  max-height: 12rem;
+  overflow-y: auto;
+  background: var(--card);
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  box-shadow: 0 6px 18px rgba(60, 48, 25, .22);
+}
+.combo-list li { display: flex; }
+.combo-list button {
+  flex: 1;
+  text-align: left;
+  border: none;
+  background: none;
+  padding: 5px 9px;
+  border-radius: 4px;
+  font-size: 12.5px;
+  color: var(--ink);
+}
+.combo-list button:hover { background: var(--manila-dim); }
+.combo-list button.on { font-weight: 620; color: var(--accent); }
+.combo-list .combo-clear {
+  color: var(--muted);
+  font-style: italic;
+  border-top: 1px solid var(--rule-soft);
+  border-radius: 0;
+  margin-top: 2px;
+}
+
+.row.new .cell { color: var(--muted); }
+.row.new .cell:first-of-type::before { content: "+"; margin-right: 6px; color: var(--rule); }
+
+/* history panel */
+/* Reads down the page, oldest at the bottom, indented under the entry it
+   belongs to. Only the chip that opens it sits in the cell's corner. */
+.history {
+  background: color-mix(in srgb, var(--manila-live) 60%, var(--card));
+  border-top: 1px dashed var(--rule);
+  padding: 9px 14px 11px 30px;
+  font-size: 12.5px;
+}
+/* The two readings, and how much has happened in each. */
+.history-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-bottom: 8px;
+}
+.history-pills { display: flex; flex-wrap: wrap; gap: 3px; }
+.history-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid transparent;
+  border-radius: 20px;
+  background: none;
+  color: var(--muted);
+  font-size: 11px;
+  padding: 2px 9px;
+}
+.history-pill:hover { color: var(--ink); background: var(--manila-dim); }
+.history-pill.on {
+  color: var(--ink);
+  background: var(--manila-dim);
+  border-color: var(--rule);
+  font-weight: 560;
+}
+.history-pill .count { font-family: var(--mono); font-size: 10px; opacity: .7; }
+
+/* Which cell a line belongs to, when reading the whole entry. */
+.history .which {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history h4 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.history ol { list-style: none; margin: 0; padding: 0; }
+.history li {
+  display: grid;
+  grid-template-columns: 6.5rem 1fr 1.1rem;
+  align-items: baseline;
+  gap: 12px;
+  padding: 3px 0;
+  border-left: 2px solid var(--rule);
+  padding-left: 12px;
+  margin-left: 2px;
+}
+.history li.current, .history li.nothing { grid-template-columns: 6.5rem 1fr; }
+.history li:has(.which) { grid-template-columns: 6.5rem 8rem 1fr 1.1rem; }
+.history li.inherited:has(.which) { grid-template-columns: 6.5rem 8rem 1fr auto; }
+.history li.current { border-left-color: var(--accent); }
+.history .when { color: var(--muted); font-family: var(--mono); font-size: 11.5px; }
+.history .what { white-space: pre-wrap; }
+.history li.current .what { font-weight: 560; }
+.history .nothing { color: var(--muted); }
+
+/* Somebody else's change, shown here because this cell follows it. Quieter
+   than the cell's own revisions, and not this panel's to delete. */
+.history li.inherited .what { color: var(--muted); font-style: italic; }
+.history li.inherited { border-left-style: dotted; }
+.history .borrowed {
+  font-size: 10px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  opacity: .75;
+  justify-self: end;
+}
+
+.history .forget {
+  border: none;
+  background: none;
+  color: transparent;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+  border-radius: 3px;
+}
+/* Hidden until wanted: deleting history should take a deliberate look. */
+.history li:hover .forget, .history .forget:focus { color: var(--muted); }
+.history .forget:hover { color: var(--danger); background: var(--manila-dim); }
+
+/* --- empty states -------------------------------------------------------- */
+
+/* The panel shown in place of a folder that has none. Tied to the element
+   rather than left as a bare `.empty`, which also caught the review card's
+   empty cells and gave each of them 80px of padding and centred text. */
+#empty { padding: 80px 16px; text-align: center; color: var(--muted); }
+#empty p { margin-bottom: 16px; }
+
+.toast {
+  position: fixed;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--danger);
+  color: #fff;
+  padding: 9px 16px;
+  border-radius: var(--radius);
+  font-size: 12.5px;
+  box-shadow: 0 4px 14px rgba(0,0,0,.2);
+  z-index: 20;
+}
+
+.menu {
+  background: var(--card);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 20px rgba(0,0,0,.16);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  min-width: 150px;
+}
+.menu button {
+  background: none;
+  border: none;
+  border-radius: 5px;
+  text-align: left;
+  padding: 7px 11px;
+  font-size: 12.5px;
+  color: var(--ink);
+}
+.menu button:hover { background: var(--manila-dim); }
+
+/* --- the repository ------------------------------------------------------- */
+
+.repo-bar { display: flex; align-items: center; gap: 4px; }
+
+/* Same rule as the scope pills, for the same reason: anything standing beside
+   a section title has to be shorter than the tab, or it -- not the tab -- sets
+   the height of the head and its bottom edge rests flat on the paper below. */
+.section-head .ghost {
+  margin-bottom: 0;
+  padding: 2px 9px;
+  font-size: 11.5px;
+  line-height: 1;
+}
+
+.canvas {
+  position: relative;
+  /* Framed like a table: the same rule, the same kraft top edge, and the same
+     square corner where the title tab comes down to meet it. */
+  border: 1px solid var(--rule);
+  border-top: 2px solid var(--kraft);
+  border-radius: 0 var(--radius) var(--radius) var(--radius);
+  background-color: var(--card);
+  /* Faint grid, like a layout pad -- enough to line frames up by eye. */
+  background-image:
+    linear-gradient(var(--rule-soft) 1px, transparent 1px),
+    linear-gradient(90deg, var(--rule-soft) 1px, transparent 1px);
+  background-size: 40px 40px, 40px 40px;
+  background-position: -1px -1px;
+  overflow: auto;
+  resize: vertical;         /* drag the canvas taller when it gets crowded */
+  min-height: 360px;
+  /* The height itself is set from the content, so the board opens whole. */
+}
+.canvas.dropping { outline: 2px dashed var(--accent); outline-offset: -6px; }
+.canvas-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  text-align: center;
+  max-width: 30rem;
+  margin: auto;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+/* A frame is a manila folder: kraft stock, a cut tab, paper inside. */
+/* No tan surround on any frame. The folder reads as a folder from its cut tab
+   and its shadow; the sheet below runs to the edges, the same for a note, a
+   list of documents and a picture alike. */
+.frame {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  background: transparent;
+  border-radius: 3px var(--radius) var(--radius) var(--radius);
+  box-shadow: 0 1px 2px rgba(60, 48, 25, .16), 0 6px 16px rgba(60, 48, 25, .09);
+}
+.frame.moving { box-shadow: 0 6px 20px rgba(60, 48, 25, .28); }
+
+/* The full-width strip is the drag target -- the whole top of the folder, not
+   a sliver of it. The fold line under it is where the cover creases. */
+.frame-head {
+  flex: none;
+  display: flex;
+  align-items: flex-end;
+  height: 28px;
+  margin: 0;
+  padding: 0 7px;
+  cursor: grab;
+  touch-action: none;
+}
+.frame-head:active { cursor: grabbing; }
+
+.frame-tab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 20px;
+  padding: 0 13px;
+  max-width: calc(100% - 34px);
+  background: var(--manila-dim);
+}
+
+/* Three ruled lines: the universal "grab here", and visible before you hover. */
+.frame-grab {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  background: repeating-linear-gradient(
+    var(--muted) 0 1px, transparent 1px 3px);
+  opacity: .6;
+}
+.frame-head:hover .frame-grab { opacity: 1; }
+
+.frame-title {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  outline: none;
+  font: 600 12px/1 var(--font);
+  letter-spacing: .02em;
+  color: var(--ink);
+  padding: 0;
+  cursor: text;
+}
+.frame-title::placeholder { color: var(--muted); font-weight: 500; }
+
+.frame-close {
+  margin-left: auto;
+  align-self: center;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.frame-close:hover { color: var(--danger); background: var(--manila); }
+
+/* The sheet inside the folder. */
+.frame-body {
+  flex: 1;
+  min-height: 0;
+  background: var(--card);
+  border: 1px solid var(--kraft);
+  border-radius: 3px var(--radius) var(--radius) var(--radius);
+  overflow: hidden;
+  display: flex;
+}
+
+.frame-text {
+  flex: 1;
+  border: none;
+  outline: none;
+  resize: none;
+  overflow-y: auto;
+  padding: 10px 12px;
+  background: transparent;
+  color: var(--ink);
+  font: 13px/1.65 var(--font);
+}
+
+/* The rich editor: a toolbar across the top of the sheet, and the note itself
+   below it, formatted as you type. */
+.rich { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+
+.rich-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex-wrap: wrap;
+  padding: 3px 4px;
+  border-bottom: 1px solid var(--rule-soft);
+  background: var(--manila-live);
+}
+.rich-gap { width: 7px; }
+.rich-tool {
+  min-width: 22px;
+  height: 21px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: none;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  padding: 0 4px;
+}
+.rich-tool:hover { color: var(--ink); background: var(--manila-dim); border-color: var(--rule); }
+.rich-tool:active { background: var(--manila); }
+
+.rich-page {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 9px 12px;
+  outline: none;
+  font: 13px/1.6 var(--font);
+  color: var(--ink);
+}
+.rich-page:focus { outline: none; }
+.rich-page > :first-child { margin-top: 0; }
+.rich-page > :last-child { margin-bottom: 0; }
+.rich-page p { margin: 0 0 .55em; }
+.rich-page h1, .rich-page h2, .rich-page h3, .rich-page h4 {
+  margin: .8em 0 .3em;
+  line-height: 1.25;
+  font-weight: 640;
+}
+.rich-page h1 { font-size: 1.3em; }
+.rich-page h2 { font-size: 1.16em; }
+.rich-page h3 { font-size: 1.06em; }
+.rich-page h4 { font-size: 1em; color: var(--muted); }
+.rich-page ul, .rich-page ol { margin: 0 0 .55em; padding-left: 1.4em; }
+.rich-page li { margin: .1em 0; }
+.rich-page a { color: var(--accent); }
+.rich-page code {
+  font: 12px var(--mono);
+  background: var(--manila-live);
+  border-radius: 3px;
+  padding: 1px 4px;
+}
+.rich-page blockquote {
+  margin: 0 0 .55em;
+  padding-left: 10px;
+  border-left: 2px solid var(--rule);
+  color: var(--muted);
+}
+.rich-page hr { border: none; border-top: 1px solid var(--rule); margin: .8em 0; }
+.rich-page table { border-collapse: collapse; margin: 0 0 .55em; }
+.rich-page th, .rich-page td {
+  border: 1px solid var(--rule);
+  padding: 3px 7px;
+  text-align: left;
+}
+.rich-page th { background: var(--manila-live); font-weight: 600; }
+
+/* Which editor this note is using. */
+.frame-view {
+  align-self: center;
+  margin-left: auto;
+  border: 1px solid transparent;
+  background: none;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 20px;
+}
+.frame-view:hover { color: var(--ink); border-color: var(--rule); }
+.frame-view.on { color: var(--accent); border-color: var(--rule); }
+.frame-head .frame-close { margin-left: 4px; }
+
+.frame-files { flex: 1; overflow-y: auto; padding: 8px 10px; }
+.frame-files ul { list-style: none; margin: 0 0 8px; padding: 0;
+                  display: flex; flex-direction: column; gap: 3px; }
+.frame-files li { display: flex; flex-direction: column; font-size: 12.5px; }
+.frame-files .doc-line { display: flex; align-items: center; gap: 8px; }
+
+/* The description. Present but silent when empty: it appears on hover as a
+   faint prompt rather than sitting there as a blank field to fill in. */
+.frame-files .doc-note {
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+  padding: 1px 2px 2px 22px;
+  cursor: text;
+  overflow-wrap: anywhere;
+}
+.frame-files .doc-note:hover { color: var(--ink); }
+.frame-files .doc-note.empty { color: transparent; font-style: italic; }
+.frame-files li:hover .doc-note.empty { color: var(--muted); opacity: .7; }
+.frame-files li:hover .doc-note.empty:hover { opacity: 1; }
+.frame-files .doc-note-edit {
+  margin: 1px 2px 2px 22px;
+  width: calc(100% - 24px);
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 2px 5px;
+  outline: none;
+}
+.frame-files .doc {
+  flex: 1;
+  color: var(--accent);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.frame-files .doc::before { content: "\1F5CE\FE0E"; margin-right: 6px; opacity: .65; }
+.frame-files .doc:hover { text-decoration: underline; }
+.frame-files .doc-size { color: var(--muted); font-size: 11px; }
+.frame-files .doc-drop { border: none; background: none; color: var(--muted); padding: 0 2px; }
+.frame-files .doc-drop:hover { color: var(--danger); }
+.frame-files .nothing { color: var(--muted); }
+
+.frame-drop, .frame-swap {
+  border: 1px dashed var(--rule);
+  border-radius: 5px;
+  background: none;
+  color: var(--muted);
+  font-size: 11.5px;
+  padding: 4px 10px;
+}
+.frame-drop:hover, .frame-swap:hover { color: var(--ink); border-color: var(--kraft); }
+
+/* The picture is pinned to the frame rather than sized by its own content, so
+   a large image can never push the frame open. */
+.frame-image { flex: 1; position: relative; min-width: 0; min-height: 0; overflow: hidden; }
+.frame-image img {
+  position: absolute;
+  inset: 6px;
+  margin: auto;
+  width: auto;
+  height: auto;
+  max-width: calc(100% - 12px);
+  max-height: calc(100% - 12px);
+  object-fit: contain;
+  border-radius: 2px;
+}
+.frame-image .frame-drop { position: absolute; inset: 0; margin: auto; width: max-content;
+                           height: max-content; }
+.frame-image .frame-swap { position: absolute; right: 6px; bottom: 6px; opacity: 0;
+                           background: var(--card); z-index: 1; }
+.frame-image:hover .frame-swap { opacity: 1; }
+
+/* A dog-eared corner, which is what you grab to resize. */
+.frame-grip {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 22px;
+  height: 22px;
+  cursor: nwse-resize;
+  touch-action: none;
+  background: linear-gradient(135deg, transparent 46%, var(--kraft) 46%);
+  border-radius: 0 0 var(--radius) 0;
+}
+.frame-grip:hover { background: linear-gradient(135deg, transparent 40%, var(--accent) 40%); }
+
+/* --- the location picker --------------------------------------------------- */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  background: rgba(40, 32, 16, .38);
+  padding: 20px;
+}
+
+.modal {
+  width: min(40rem, 100%);
+  max-height: 86vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--card);
+  border: 1px solid var(--rule);
+  border-top: 3px solid var(--kraft);
+  border-radius: var(--radius);
+  box-shadow: 0 10px 40px rgba(40, 32, 16, .3);
+  padding: 20px 22px;
+}
+.modal h3 { margin: 0; font-size: 16px; }
+.modal .hint { margin: 0; color: var(--muted); font-size: 12px; }
+
+.modal .places { display: flex; flex-wrap: wrap; gap: 4px; }
+.modal .places button { border: 1px solid var(--rule); }
+
+.modal .crumbs { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+                 font-size: 12px; color: var(--muted); }
+.modal .crumbs .path { font-family: var(--mono); color: var(--ink); overflow-wrap: anywhere; }
+.modal .crumbs .warn { color: var(--danger); }
+
+.modal .maker { display: flex; gap: 6px; }
+.modal .maker input[type="text"] { flex: 1; }
+
+.modal .dirs {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  min-height: 9rem;
+  max-height: 17rem;
+  overflow-y: auto;
+  border: 1px solid var(--rule-soft);
+  border-radius: 5px;
+  background: var(--paper);
+}
+.modal .dirs li { display: flex; }
+.modal .dirs button {
+  flex: 1;
+  text-align: left;
+  border: none;
+  background: none;
+  padding: 5px 9px;
+  border-radius: 4px;
+  font-size: 12.5px;
+}
+.modal .dirs button::before { content: "\1F4C1\FE0E"; margin-right: 8px; opacity: .7; }
+.modal .dirs button:hover { background: var(--manila-dim); }
+.modal .dirs .nothing { color: var(--muted); font-size: 12.5px; padding: 5px 9px; }
+/* A folder that already holds a project, marked while choosing one to open. */
+.modal .dirs .is-project {
+  align-self: center;
+  flex: none;
+  margin-right: 6px;
+  padding: 0 5px;
+  border: 1px solid var(--kraft);
+  border-radius: 3px;
+  color: var(--kraft);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.modal input[type="text"] {
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  padding: 7px 10px;
+}
+.modal .chosen { margin: 0; font-size: 12px; color: var(--muted);
+                 font-family: var(--mono); overflow-wrap: anywhere; }
+.modal-actions { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+
+/* --- the Review tab -------------------------------------------------------- */
+/*
+ * Cards, not a table. What is being read here is an argument -- this is what
+ * the cell says, this is what is proposed, this is the mail it rests on -- and
+ * a grid is the wrong shape for an argument. The batch is the outer card
+ * because a sync run is decided as a run more often than one line at a time.
+ */
+
+.pages .tab .pending {
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--paper);
+  font-size: 10.5px;
+  font-weight: 700;
+  font-family: var(--mono);
+  vertical-align: 1px;
+}
+
+/* --- sources: where a folder's news arrives -------------------------------- */
+
+.sources { margin-bottom: 20px; }
+.sources .section-head { align-items: baseline; }
+
+.sources-toggle {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.sources-toggle .twist { color: var(--muted); font-size: 11px; }
+.sources-toggle:hover .section-title { color: var(--accent); }
+
+/* Shut, the panel is one line: what is listed, and whether it has been read. */
+.sources-line {
+  color: var(--muted);
+  font-size: 12.5px;
+  margin-left: 10px;
+}
+
+.sources-box {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--card);
+  box-shadow: var(--shadow);
+  padding: 12px 14px;
+  max-width: 62rem;
+}
+.sources-box .hint {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 12.5px;
+  max-width: 44rem;
+}
+
+.source-list { display: grid; gap: 4px; margin-bottom: 10px; }
+
+/* Kind, name, the id itself, what contains it, and a way to stop listening.
+ * The id column is the widest because a Graph channel id is 50 characters and
+ * a pointer you cannot read whole is a pointer you cannot check. */
+.source-row {
+  display: grid;
+  grid-template-columns: 8.5rem minmax(7rem, 1fr) minmax(12rem, 2fr) minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+.source-kind { color: var(--muted); font-size: 12.5px; }
+/* Not inside a .group, so the shared hover reveal never reaches it. */
+.source-row:hover .icon { opacity: 1; }
+
+.source-row input {
+  font: inherit;
+  padding: 4px 7px;
+  border: 1px solid var(--rule-soft);
+  border-radius: 5px;
+  background: var(--paper);
+  color: var(--ink);
+  min-width: 0;
+}
+.source-row input:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--card);
+}
+/* With no container to name, the id takes that column too, so the trash sits
+ * beside it rather than across an empty gap. */
+.source-row .source-ref.whole { grid-column: span 2; }
+.source-row .source-ref, .source-row .source-within {
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+
+.source-add { display: flex; gap: 6px; flex-wrap: wrap; }
+.source-add .ghost { font-size: 11.5px; padding: 3px 9px; }
+
+/* Adding one is a question with an explanation and two answers, so it is a
+ * card rather than another row of the list -- and Cancel is a word, not an
+ * unlabelled cross competing with the button beside it. */
+.source-new {
+  border: 1px dashed var(--rule);
+  border-radius: var(--radius);
+  background: var(--manila-dim);
+  padding: 11px 12px;
+  max-width: 40rem;
+}
+.source-new-kind { font-weight: 600; margin-bottom: 7px; }
+.source-new-ref {
+  font: inherit;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  background: var(--card);
+  color: var(--ink);
+}
+.source-new-ref:focus { outline: none; border-color: var(--accent); }
+.sources-box .source-new .hint { margin: 7px 0 0; font-size: 12px; }
+.source-new-actions { display: flex; gap: 8px; margin-top: 10px; }
+.source-new-actions .ghost, .source-new-actions .primary {
+  font-size: 12px;
+  padding: 4px 12px;
+}
+
+/* How far each source has been read -- the fact that decides how far back the
+ * next run goes, which is why it lives beside the pointers rather than in the
+ * queue below. */
+.source-coverage {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--rule-soft);
+  font-size: 12px;
+  display: grid;
+  gap: 3px;
+}
+.coverage-run { display: flex; gap: 10px; flex-wrap: wrap; align-items: baseline; }
+.coverage-source { font-weight: 600; min-width: 6rem; }
+.coverage-point { font-family: var(--mono); }
+.source-coverage .muted { color: var(--muted); }
+.coverage-when { color: var(--muted); margin-left: auto; }
+
+@media (max-width: 720px) {
+  .source-row { grid-template-columns: 1fr auto; }
+  .source-kind { grid-column: 1 / -1; }
+  .source-row .source-ref.whole { grid-column: auto; }
+}
+
+.review-empty {
+  border: 1px dashed var(--rule);
+  border-radius: var(--radius);
+  background: var(--card);
+  padding: 22px 20px;
+  max-width: 46rem;
+}
+.review-empty p { margin: 0 0 8px; }
+.review-empty p:last-child { margin-bottom: 0; }
+.review-empty .hint { color: var(--muted); font-size: 12.5px; }
+
+.batch {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--card);
+  box-shadow: var(--shadow);
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+
+.batch-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 9px 12px;
+  background: var(--manila-dim);
+  border-bottom: 1px solid var(--rule);
+}
+.batch-title { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.batch-source { font-weight: 600; }
+.batch-summary { color: var(--muted); font-size: 12.5px; }
+.batch-when { color: var(--muted); font-size: 11.5px; font-family: var(--mono); }
+.batch-head .ghost { font-size: 11.5px; padding: 3px 9px; }
+
+.suggestion {
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--rule-soft);
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 3px 10px;
+}
+.suggestion:last-child { border-bottom: none; }
+.suggestion.stale { background: color-mix(in srgb, var(--danger) 6%, transparent); }
+.suggestion.accepted, .suggestion.rejected { opacity: .62; }
+.suggestion.gone .suggestion-body { text-decoration: line-through; }
+
+.suggestion-head {
+  grid-column: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.suggestion-head .what { font-weight: 600; font-size: 12.5px; }
+.suggestion-head .about { color: var(--muted); font-size: 12px; }
+.suggestion-head .flag {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--danger);
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  padding: 0 4px;
+}
+
+.suggestion-body { grid-column: 1; margin-top: 3px; }
+
+/* Now above, proposed below, so the eye travels the way the change does. */
+.side { display: flex; gap: 8px; align-items: baseline; padding: 1px 0; }
+.side-label {
+  flex: 0 0 4.6rem;
+  text-align: right;
+  color: var(--muted);
+  font-size: 11px;
+  font-family: var(--mono);
+}
+.side-value { white-space: pre-wrap; overflow-wrap: anywhere; }
+.side.proposed .side-value { font-weight: 600; color: var(--accent); }
+
+.suggestion .fields { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; }
+.suggestion .fields dt { color: var(--muted); font-size: 11.5px; text-align: right; }
+.suggestion .fields dd { margin: 0; overflow-wrap: anywhere; }
+.suggestion .fields dd.empty { color: var(--muted); }
+/* The cell being changed, marked within the entry it belongs to. */
+.suggestion .fields dt.changed { color: var(--accent); font-weight: 600; }
+.suggestion .fields dd.changed {
+  border-left: 2px solid var(--accent);
+  padding-left: 7px;
+  margin: 2px 0;
+}
+/* The rest of the entry can be changed from the card. */
+.suggestion .fields dd.editable {
+  cursor: text;
+  border-radius: 3px;
+  padding: 0 4px;
+  margin: 0 -4px;
+}
+.suggestion .fields dd.editable:hover {
+  background: color-mix(in srgb, var(--manila-dim) 45%, transparent);
+}
+.suggestion .fields dd .cell-editor { cursor: auto; padding: 3px 0; }
+.cell-editor input[type="text"], .cell-editor textarea, .cell-editor input[type="date"] {
+  font: inherit;
+  width: 100%;
+}
+.cell-editor .editor-actions { margin-top: 5px; }
+.suggestion .fields dd.changed .side-label { flex-basis: 3.8rem; text-align: left; }
+.plain-proposal { color: var(--muted); margin-bottom: 3px; }
+
+/* An entry card: several changes to one entry, each with its own notes. */
+.suggestion .change + .change { margin-top: 3px; }
+.side.superseded .side-value {
+  text-decoration: line-through;
+  font-weight: 400;
+  color: var(--muted);
+}
+/* An editor opened inside a changed cell, which has no label column to share
+   the width with -- so it takes the cell. */
+.suggestion .fields dd .change input[type="text"],
+.suggestion .fields dd .change input[type="date"],
+.suggestion .fields dd .change textarea,
+.suggestion .fields dd .change select {
+  width: 100%;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  padding: 3px 6px;
+}
+.suggestion .fields dd .change textarea { min-height: 3.6em; }
+.suggestion .fields dd .change .datenote-editor { display: flex; gap: 5px; flex-wrap: wrap; }
+.suggestion .fields dd .change .datenote-editor > * { flex: 1 1 7rem; }
+
+.change-notes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  padding-left: calc(3.8rem + 8px);
+}
+.change-notes:empty { display: none; }
+.change-notes .quote {
+  border-left: 2px solid var(--kraft);
+  padding-left: 6px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+.change-notes .reason { margin-top: 0; font-size: 11.5px; }
+.change-notes .flag {
+  font-size: 10px;
+  text-transform: uppercase;
+  color: var(--danger);
+}
+.change-state {
+  color: var(--muted);
+  font-size: 11px;
+  font-family: var(--mono);
+}
+.change-drop {
+  border: none;
+  background: none;
+  color: var(--muted);
+  padding: 0 3px;
+  line-height: 1;
+}
+.change-drop:hover { color: var(--danger); }
+.entry-editor-actions { grid-column: 1; margin-top: 6px; }
+
+.evidence { grid-column: 1; margin-top: 6px; }
+.evidence .quote {
+  display: inline-block;
+  border-left: 2px solid var(--kraft);
+  padding-left: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.reason { grid-column: 1; color: var(--muted); font-size: 12px; margin-top: 3px; }
+.reason.edited { font-style: italic; }
+.warn-line { grid-column: 1; color: var(--danger); font-size: 12px; margin-top: 5px; }
+.decided {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: start;
+  color: var(--muted);
+  font-size: 11px;
+  font-family: var(--mono);
+}
+
+.suggestion-actions {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: start;
+  display: flex;
+  gap: 3px;
+}
+/* Always visible, unlike a row's icons: this whole tab is a list of decisions
+ * waiting to be made, so the way to make one should not need hovering for. */
+.suggestion-actions .icon { opacity: .85; }
+.suggestion-actions .icon:hover { opacity: 1; }
+.suggestion-actions .icon:disabled { opacity: .25; cursor: not-allowed; }
+.suggestion-actions .accept:hover { color: var(--accent); }
+.suggestion-actions .reject:hover { color: var(--danger); }
+
+.suggestion-editor {
+  margin-top: 6px;
+  border: 1px solid var(--rule);
+  border-left: 2px solid var(--accent);
+  border-radius: 5px;
+  background: var(--paper);
+  padding: 9px 10px;
+}
+.editor-line { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.editor-label {
+  flex: 0 0 6rem;
+  text-align: right;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+.editor-line > :not(.editor-label) { flex: 1; min-width: 0; }
+.editor-line input[type="text"], .editor-line textarea, .editor-line input[type="date"] {
+  width: 100%;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  padding: 4px 7px;
+}
+.editor-line .datenote-editor { display: flex; gap: 5px; flex-wrap: wrap; }
+.editor-line .datenote-editor > * { flex: 1 1 7rem; }
+.editor-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 4px; }
+.editor-actions .primary, .editor-actions .ghost { font-size: 12px; padding: 4px 10px; }
